@@ -1,0 +1,72 @@
+from flask import Flask, request, jsonify
+import cv2
+
+app = Flask(__name__)
+
+class ParkingSpaceDetector:
+    def __init__(self, image_path, roi_list):
+        self.image_path = image_path
+        self.image = cv2.imread(image_path)
+        self.roi_list = roi_list
+        self.results = None  # Variable para almacenar los resultados
+
+    def preprocess_image(self):
+        self.resized_image = self.resize_image(self.image)
+        self.gray = cv2.cvtColor(self.resized_image, cv2.COLOR_BGR2GRAY)
+        self.blurred = cv2.GaussianBlur(self.gray, (5, 5), 0)
+        self.thresh = cv2.threshold(self.blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+    def resize_image(self, image):
+        max_dimension = 1080
+        height, width = self.image.shape[:2]
+        if width > max_dimension or height > max_dimension:
+            scale = max_dimension / max(width, height)
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            return cv2.resize(image, (new_width, new_height))
+        return image
+    
+    def calculate_segmented_area_percentage_in_roi(self, roi_coords):
+        x, y, w, h = roi_coords
+        roi = self.thresh[y:y+h, x:x+w]
+        
+        contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        total_contour_area = 0
+        
+        for contour in contours:
+            total_contour_area += cv2.contourArea(contour)
+        
+        roi_area = w * h
+        segmented_area = roi_area - total_contour_area
+        percentage_segmented_area = (segmented_area / roi_area) * 100
+        
+        return percentage_segmented_area
+    
+    def detect_parking_spaces(self, threshold_percentage):
+        results = []
+        
+        for roi_coords in self.roi_list:
+            percentage_segmented_area = self.calculate_segmented_area_percentage_in_roi(roi_coords)
+            if percentage_segmented_area < threshold_percentage:
+                status = 0
+            else:
+                status = 1
+            results.append((status))
+
+        self.results = results  
+        
+        return results
+
+@app.route('/parking_status', methods=['GET'])
+def get_parking_status():
+    # Procesa la imagen  y obtiene el estado de disponibilidad
+    detector = ParkingSpaceDetector("Test13.jpg", [(470, 30, 260, 60), (440, 90, 290, 70), (420, 160, 310, 90), (380, 250, 350, 115), (320, 365, 420, 155), (250, 520, 490, 230)])
+    detector.preprocess_image()
+    detector.detect_parking_spaces(threshold_percentage=30)  # Realiza la detección
+
+    # Devuelve los resultados en forma de JSON
+    return jsonify({'status': detector.results})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
